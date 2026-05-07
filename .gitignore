@@ -1,0 +1,29 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*.so
+.eggs/
+*.egg-info/
+build/
+dist/
+
+# venv
+.venv/
+venv/
+env/
+
+# runs / logs / outputs
+log/
+output/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
