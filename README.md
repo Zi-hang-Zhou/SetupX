@@ -1,4 +1,4 @@
-# Setup Agent — Minimum Runnable Distribution
+# SetupX — Minimum Runnable Distribution
 
 This package configures a runnable Docker environment for an arbitrary Git
 repository: given a repo URL, the agent inspects the project, runs shell
@@ -139,7 +139,75 @@ log/
 
 ---
 
-## 6. Layout
+## 6. Optional — populate the experience store
+
+The agent can consult an offline experience knowledge base (XPU) during
+Phase 1: a pgvector-backed library of "if you see this signal, try these
+commands" snippets distilled from past runs. **It is off by default** and
+the agent works fine without it — if you do not need it, skip this section.
+
+### 6.1 Bring up Postgres + pgvector
+
+Any Postgres ≥ 14 with the `pgvector` extension works. The fastest way:
+
+```bash
+docker run -d --name xpu-pg \
+    -e POSTGRES_PASSWORD=changeme \
+    -p 5433:5432 \
+    pgvector/pgvector:pg16
+```
+
+Then point `.env` at it:
+
+```
+XPU_ENABLED=true
+XPU_VECTOR_ENABLED=true
+XPU_TABLE=xpu_entries
+dns=postgresql://postgres:changeme@localhost:5433/postgres
+
+EMBEDDING_API_KEY=<key for an OpenAI-compatible embedding endpoint>
+EMBEDDING_BASE_URL=<endpoint base URL>
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+The table and IVFFlat index are created automatically on first connection.
+You do not need to run a separate migration.
+
+### 6.2 Import a JSONL of experience entries
+
+Each line is one entry with this shape:
+
+```jsonc
+{
+  "id":         "unique-string",
+  "context":    { /* match conditions: language, build system, etc. */ },
+  "signals":    { /* error fingerprints */ },
+  "advice_nl":  ["natural-language hints"],
+  "atoms":      [{"name": "shell", "args": {"cmd": "..."}}],
+  "telemetry":  {"hits": 0, "successes": 0, "failures": 0}
+}
+```
+
+Bulk-import:
+
+```bash
+python scripts/import_xpu_jsonl.py path/to/entries.jsonl
+python scripts/import_xpu_jsonl.py path/to/entries.jsonl --clear   # truncate first
+```
+
+The script embeds each entry's text and upserts into `XPU_TABLE` (default
+`xpu_entries`). Already-present `id`s are updated rather than duplicated.
+
+### 6.3 Maintenance helpers
+
+```bash
+python scripts/export_xpu.py -o backup.jsonl --full   # dump table to JSONL
+python scripts/reset_db.py                            # drop the XPU table
+```
+
+---
+
+## 7. Layout
 
 ```
 .
@@ -147,7 +215,10 @@ log/
 ├── README.md             # this file
 ├── requirements.txt      # python deps
 ├── scripts/
-│   └── run.sh            # one-line wrapper around `python -m src.main`
+│   ├── run.sh                # one-line wrapper around `python -m src.main`
+│   ├── import_xpu_jsonl.py   # bulk-import experiences from JSONL
+│   ├── export_xpu.py         # dump experiences to JSONL
+│   └── reset_db.py           # drop the XPU table
 └── src/
     ├── main.py                # CLI entry point; orchestrates the 3 phases
     ├── agent.py               # Phase 1 main loop (speculative exec + rollback)
@@ -164,7 +235,7 @@ log/
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 - **`docker.errors.DockerException`** — Docker daemon is not running, or the
   current user is not in the `docker` group.
@@ -174,19 +245,21 @@ log/
   ...` (see §4 above).
 - **Want to disable the experience store** — pass `--no-xpu`, or set
   `XPU_ENABLED=false` in `.env` (the default).
+- **Postgres errors during XPU import** — confirm the `dns` connection string
+  in `.env` is reachable, the `pgvector` extension is installed, and your
+  embedding endpoint is responsive (the importer needs it to embed every row).
 
 ---
 
-## 8. What is NOT in this distribution
+## 9. Scope — what this distribution does NOT include
 
-To keep the package minimal and self-contained, the following are
-intentionally excluded:
+To keep the package self-contained and reproducible:
 
-- Benchmark repository URL lists / family spec JSONs
-- Experience-store dumps (`xpu_*.jsonl`)
-- Run logs, trajectories, and experiment outputs
-- Benchmark orchestration scripts (parallel runners, telemetry)
-- Paper drafts and reference PDFs
+- No benchmark repository URL lists / family-spec JSONs.
+- No experience-store JSONL dumps. Bring your own; the importer in §6.2
+  takes any file matching the documented schema.
+- No run logs, trajectories, or experiment outputs.
+- No benchmark orchestration scripts (parallel runners, telemetry, report
+  generators).
 
-The goal of this package is single-repo reproducibility, not benchmark
-replay.
+The goal is single-repo reproducibility. Everything else is left out.
