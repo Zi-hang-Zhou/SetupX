@@ -251,15 +251,3 @@ python scripts/reset_db.py                            # drop the XPU table
 
 ---
 
-## 9. Scope — what this distribution does NOT include
-
-To keep the package self-contained and reproducible:
-
-- No benchmark repository URL lists / family-spec JSONs.
-- No experience-store JSONL dumps. Bring your own; the importer in §6.2
-  takes any file matching the documented schema.
-- No run logs, trajectories, or experiment outputs.
-- No benchmark orchestration scripts (parallel runners, telemetry, report
-  generators).
-
-The goal is single-repo reproducibility. Everything else is left out.
