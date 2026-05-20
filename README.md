@@ -205,6 +205,19 @@ python scripts/export_xpu.py -o backup.jsonl --full   # dump table to JSONL
 python scripts/reset_db.py                            # drop the XPU table
 ```
 
+`scripts/inflate_xpu_db.py` is an optional research utility that synthesises
+noise entries on top of the existing table (context perturbation,
+cross-grafting, generalisation blur, cross-language drift), for stress-testing
+retrieval against a partially-noisy store. It is not needed for normal use.
+
+```bash
+python scripts/inflate_xpu_db.py --target 2000       # synthesise noise up to N rows
+```
+
+All synthesised rows carry id prefixes `noise_ctx_*`, `noise_graft_*`,
+`noise_vague_*`, `noise_lang_*`, and can be removed with a single
+`DELETE FROM xpu_entries WHERE id LIKE 'noise_%';`.
+
 ---
 
 ## 7. Layout
@@ -218,7 +231,8 @@ python scripts/reset_db.py                            # drop the XPU table
 │   ├── run.sh                # one-line wrapper around `python -m src.main`
 │   ├── import_xpu_jsonl.py   # bulk-import experiences from JSONL
 │   ├── export_xpu.py         # dump experiences to JSONL
-│   └── reset_db.py           # drop the XPU table
+│   ├── reset_db.py           # drop the XPU table
+│   └── inflate_xpu_db.py     # (optional) synthesise noise entries for stress testing
 └── src/
     ├── main.py                # CLI entry point; orchestrates the 3 phases
     ├── agent.py               # Phase 1 main loop (speculative exec + rollback)

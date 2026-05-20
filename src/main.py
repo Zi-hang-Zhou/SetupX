@@ -7,14 +7,19 @@ Stage 3: Report (write results)
 
 import json
 import os
+import shutil
 import signal
 import sys
+import tempfile
+import time
 from pathlib import Path
+from typing import Any
 
 from .logger import get_logger
 from .agent import SpeculativeSetupAgent
 from .prosecutor_agent import ProsecutorAgent
 from .judge_agent import JudgeAgent
+from .models import ProsecutionResult
 
 logger = get_logger("main")
 
@@ -61,6 +66,143 @@ def _build_traj_from_history(history: list[dict]) -> list[dict]:
                     "content": output,
                 })
     return traj
+
+
+def _store_xpu_experience(
+    xpu_client: Any,
+    setup_result: Any,
+    prosecution: "ProsecutionResult | None",
+    judgment: "dict | None",
+) -> None:
+    """Push the just-finished run's trajectory into the XPU experience store.
+
+    Runs after Phase 2 completes. Two modes:
+      * Phase 2 produced a verdict -> attach `phase2_context` (charges, verdict,
+        judge reasoning, verifier summary, prosecutor investigation) so the
+        extractor LLM can ground its decisions in adjudication signals.
+      * Setup timed out / Phase 2 was skipped (multi-repo) -> still extract,
+        with `phase2_context=None`. Timed-out trajectories tend to expose the
+        most valuable failure modes (dependency cycles, unavailable packages,
+        deprecated APIs); dropping them would be a waste.
+
+    No-ops cleanly when XPU is disabled (xpu_client is not a VectorXPUClient)
+    or the trajectory is empty. Any failure is logged at warning level and
+    swallowed — XPU storage must never affect the run's exit status.
+    """
+    from .xpu_client import VectorXPUClient
+    if not isinstance(xpu_client, VectorXPUClient):
+        return
+    if not setup_result.history:
+        logger.debug("[XPU Store] empty trajectory, skipping")
+        return
+
+    try:
+        traj = _build_traj_from_history(setup_result.history)
+
+        # Build phase2_context only when Phase 2 actually ran.
+        phase2_context = None
+        if prosecution is not None:
+            verifier_msgs = setup_result.last_verify_messages or []
+            verifier_text = "".join(str(m.get("content", "")) for m in verifier_msgs)
+
+            # Summarise the prosecutor's investigation transcript: keep
+            # assistant turns ([prosecutor] reasoning) and user turns
+            # ([evidence] command results), drop system prompts, and cap to
+            # the last ~30 turns (~15 action-result pairs) so the LLM
+            # extractor sees the decisive steps without context bloat.
+            prosecutor_investigation = ""
+            if prosecution.messages:
+                inv_parts = []
+                for msg in prosecution.messages:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "system":
+                        continue
+                    if role == "assistant":
+                        inv_parts.append(f"[prosecutor] {content[:400]}")
+                    elif role == "user":
+                        inv_parts.append(f"[evidence] {content[:400]}")
+                prosecutor_investigation = "\n".join(inv_parts[-30:])
+
+            phase2_context = {
+                "prosecution_charges": prosecution.charges,
+                "verdict": judgment["verdict"] if judgment else None,
+                "judge_reasoning": judgment["reasoning"] if judgment else "",
+                "verifier_summary": verifier_text[:1000],
+                "prosecutor_investigation": prosecutor_investigation[:4000],
+            }
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="xpu_agent_"))
+        try:
+            repo_path = setup_result.repo_url.rstrip("/")
+            if "github.com/" in repo_path:
+                repo_path = repo_path.split("github.com/")[-1]
+            safe_name = repo_path.replace("/", "__")
+
+            traj_dir = tmp_dir / "trajs"
+            traj_dir.mkdir()
+            jsonl_path = traj_dir / f"{safe_name}@HEAD.jsonl"
+
+            with open(jsonl_path, "w", encoding="utf-8") as f:
+                for step in traj:
+                    f.write(json.dumps(step, ensure_ascii=False) + "\n")
+
+            extracted_file = tmp_dir / "extracted.jsonl"
+            from .xpu.extract_xpu_from_trajs_mvp import extract_xpu_from_trajs
+            extract_xpu_from_trajs(jsonl_path, extracted_file, phase2_context=phase2_context)
+
+            xpu_objects = []
+            if extracted_file.exists():
+                with open(extracted_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        rec = json.loads(line)
+                        if rec.get("llm_decision") == "xpu" and rec.get("xpu"):
+                            xpu_objects.append(rec["xpu"])
+
+            if not xpu_objects:
+                logger.debug("[XPU Store] extractor LLM kept nothing, skipping")
+                return
+
+            logger.info(f"[XPU Store] extractor produced {len(xpu_objects)} entries, storing")
+
+            from .xpu.xpu_adapter import XpuEntry, XpuAtom
+            from .xpu.xpu_vector_store import build_xpu_text, text_to_embedding
+            from .xpu.xpu_dedup import dedup_and_store
+
+            for i, xpu_obj in enumerate(xpu_objects):
+                # Generate a fresh ID server-side: the extractor LLM tends to
+                # reuse the same "xpu_env_py_001" template, which would clobber
+                # existing entries on upsert.
+                auto_id = f"xpu_{int(time.time())}_{os.urandom(3).hex()}"
+                advice = xpu_obj.get("advice_nl", [])
+                logger.info(f"[XPU Store] entry[{i+1}] auto_id={auto_id} advice={advice}")
+
+                atoms = [
+                    XpuAtom(name=a.get("name", ""), args=a.get("args", {}))
+                    for a in xpu_obj.get("atoms", [])
+                ]
+                xpu_entry = XpuEntry(
+                    id=auto_id,
+                    context=xpu_obj.get("context", {}),
+                    signals=xpu_obj.get("signals", {}),
+                    advice_nl=xpu_obj.get("advice_nl", []),
+                    atoms=atoms,
+                )
+                text = build_xpu_text(xpu_entry)
+                embedding = text_to_embedding(text)
+                dedup_result = dedup_and_store(xpu_client._store, xpu_entry, embedding, use_llm=True)
+                logger.info(
+                    f"[XPU Store] [{i+1}/{len(xpu_objects)}] "
+                    f"{dedup_result['action']}: {dedup_result['reason']}"
+                )
+
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    except Exception as e:
+        logger.warning(f"[XPU Store] storage failed (does not affect run result): {e}")
 
 
 def main() -> int:
@@ -217,7 +359,12 @@ def main() -> int:
         phase2_reason = f"[error] phase 2 execution failed: {e}"
 
     finally:
-        # -- Cleanup: close clients + destroy container --
+        # -- Cleanup: store XPU experience, then close clients + destroy container --
+        # XPU storage must run BEFORE the client is closed (it borrows
+        # `xpu_client._store`'s connection pool). It self-skips when XPU is
+        # disabled, and any failure inside is swallowed so cleanup proceeds.
+        _store_xpu_experience(agent._xpu, setup_result, prosecution, judgment)
+
         if hasattr(agent._xpu, "close"):
             agent._xpu.close()
         # OURSYS_KEEP_CONTAINER=1 keeps the container (for PoC / manual inspection);
