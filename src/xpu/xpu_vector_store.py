@@ -2,8 +2,7 @@
 
 Schema (table xpu_entries by default):
 - id           TEXT PRIMARY KEY
-- context      JSONB
-- signals      JSONB
+- signals      JSONB  (applicability + regex + keywords + situation_triggers)
 - advice_nl    JSONB
 - atoms        JSONB
 - embedding    vector(1536)
@@ -52,7 +51,6 @@ def create_xpu_table(conn, table_name: str = None) -> None:
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {tbl} (
                 id TEXT PRIMARY KEY,
-                context JSONB NOT NULL,
                 signals JSONB NOT NULL,
                 advice_nl JSONB NOT NULL,
                 atoms JSONB NOT NULL,
@@ -128,7 +126,7 @@ def build_xpu_text(entry: XpuEntry) -> str:
     """
     parts = []
 
-    ctx = entry.context
+    ctx = entry.signals.get("applicability", {}) or {}
     if ctx.get("lang"):
         parts.append(f"Language: {ctx['lang']}")
     if ctx.get("tools"):
@@ -196,17 +194,15 @@ class XpuVectorStore:
                 embedding_str = "[" + ",".join(str(float(x)) for x in embedding) + "]"
 
                 cur.execute(f"""
-                    INSERT INTO {self._table} (id, context, signals, advice_nl, atoms, embedding)
-                    VALUES (%s, %s, %s, %s, %s, %s::vector)
+                    INSERT INTO {self._table} (id, signals, advice_nl, atoms, embedding)
+                    VALUES (%s, %s, %s, %s, %s::vector)
                     ON CONFLICT (id) DO UPDATE SET
-                        context = EXCLUDED.context,
                         signals = EXCLUDED.signals,
                         advice_nl = EXCLUDED.advice_nl,
                         atoms = EXCLUDED.atoms,
                         embedding = EXCLUDED.embedding;
                 """, (
                     entry.id,
-                    json.dumps(entry.context),
                     json.dumps(entry.signals),
                     json.dumps(entry.advice_nl),
                     json.dumps([{"name": a.name, "args": a.args} for a in entry.atoms]),
@@ -255,23 +251,23 @@ class XpuVectorStore:
                 if ctx:
                     if ctx.lang:
                         if isinstance(ctx.lang, (list, tuple, set)):
-                            where_clauses.append("context->>'lang' = ANY(%s)")
+                            where_clauses.append("signals->'applicability'->>'lang' = ANY(%s)")
                             where_params.append(list(ctx.lang))
                         else:
-                            where_clauses.append("context->>'lang' = %s")
+                            where_clauses.append("signals->'applicability'->>'lang' = %s")
                             where_params.append(ctx.lang)
                     if ctx.python:
                         py_list = ctx.python if isinstance(ctx.python, (list, tuple, set)) else [ctx.python]
                         py_conditions = []
                         for py_ver in py_list:
-                            py_conditions.append("EXISTS (SELECT 1 FROM jsonb_array_elements_text(context->'python') AS v WHERE v LIKE %s)")
+                            py_conditions.append("EXISTS (SELECT 1 FROM jsonb_array_elements_text(signals->'applicability'->'python') AS v WHERE v LIKE %s)")
                             where_params.append(f"{py_ver}%")
                         if py_conditions:
                             where_clauses.append(f"({' OR '.join(py_conditions)})")
                     if ctx.tools:
                         tool_conditions = []
                         for tool in ctx.tools:
-                            tool_conditions.append("EXISTS (SELECT 1 FROM jsonb_array_elements_text(context->'tools') AS t WHERE t = %s)")
+                            tool_conditions.append("EXISTS (SELECT 1 FROM jsonb_array_elements_text(signals->'applicability'->'tools') AS t WHERE t = %s)")
                             where_params.append(tool)
                         if tool_conditions:
                             where_clauses.append(f"({' OR '.join(tool_conditions)})")
@@ -306,7 +302,7 @@ class XpuVectorStore:
                 if direct_mode:
                     query = f"""
                         SELECT
-                            id, context, signals, advice_nl, atoms,
+                            id, signals, advice_nl, atoms,
                             1 - (embedding <=> %s::vector) AS similarity,
                             telemetry,
                             1 - (embedding <=> %s::vector) AS composite_score
@@ -325,7 +321,6 @@ class XpuVectorStore:
                     query = f"""
                         SELECT
                             id,
-                            context,
                             signals,
                             advice_nl,
                             atoms,
@@ -354,7 +349,7 @@ class XpuVectorStore:
 
                 results = []
                 for row in rows:
-                    telemetry = row[6] or {}
+                    telemetry = row[5] or {}
                     hits = int(telemetry.get("hits", 0))
                     successes = float(telemetry.get("successes", 0))
                     success_rate = successes / max(hits, 1)
@@ -367,13 +362,12 @@ class XpuVectorStore:
 
                     results.append({
                         "id": row[0],
-                        "context": row[1],
-                        "signals": row[2],
-                        "advice_nl": row[3],
-                        "atoms": row[4],
-                        "similarity": float(row[5]),
+                        "signals": row[1],
+                        "advice_nl": row[2],
+                        "atoms": row[3],
+                        "similarity": float(row[4]),
                         "telemetry": telemetry,
-                        "composite_score": float(row[7]),
+                        "composite_score": float(row[6]),
                         "tier": tier,
                     })
 
@@ -386,7 +380,7 @@ class XpuVectorStore:
         try:
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT id, context, signals, advice_nl, atoms
+                    SELECT id, signals, advice_nl, atoms
                     FROM {self._table}
                     WHERE id = %s;
                 """, (xpu_id,))
@@ -395,10 +389,9 @@ class XpuVectorStore:
                     return None
                 return {
                     "id": row[0],
-                    "context": row[1],
-                    "signals": row[2],
-                    "advice_nl": row[3],
-                    "atoms": row[4],
+                    "signals": row[1],
+                    "advice_nl": row[2],
+                    "atoms": row[3],
                 }
         finally:
             self._put_conn(conn)

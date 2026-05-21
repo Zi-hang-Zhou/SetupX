@@ -54,7 +54,7 @@ def export_from_db(store: XpuVectorStore, exclude_ids: set[str]) -> list[dict]:
             if exclude_ids:
                 cur.execute(
                     f"""
-                    SELECT id, context, signals, advice_nl, atoms, telemetry
+                    SELECT id, signals, advice_nl, atoms, telemetry
                     FROM {table}
                     WHERE id != ALL(%s)
                     ORDER BY created_at;
@@ -64,7 +64,7 @@ def export_from_db(store: XpuVectorStore, exclude_ids: set[str]) -> list[dict]:
             else:
                 cur.execute(
                     f"""
-                    SELECT id, context, signals, advice_nl, atoms, telemetry
+                    SELECT id, signals, advice_nl, atoms, telemetry
                     FROM {table}
                     ORDER BY created_at;
                     """
@@ -76,11 +76,10 @@ def export_from_db(store: XpuVectorStore, exclude_ids: set[str]) -> list[dict]:
     return [
         {
             "id": r[0],
-            "context": r[1] or {},
-            "signals": r[2] or {},
-            "advice_nl": r[3] or [],
-            "atoms": r[4] or [],
-            "telemetry": r[5] or {},
+            "signals": r[1] or {},
+            "advice_nl": r[2] or [],
+            "atoms": r[3] or [],
+            "telemetry": r[4] or {},
         }
         for r in rows
     ]

@@ -419,13 +419,13 @@ def build_traj_prompt(
         "commands_history_text": commands_text,
         "error_snippets_text": errors_text,
         "xpu_schema": {
-            "context": {
-                "lang": "e.g. python",
-                "os": ["relevant operating systems, e.g. linux"],
-                "python": ["relevant Python version prefixes, e.g. 3.8"],
-                "tools": ["relevant tools, e.g. pytest, pip"],
-            },
             "signals": {
+                "applicability": {
+                    "lang": "e.g. python",
+                    "os": ["relevant operating systems, e.g. linux"],
+                    "python": ["relevant Python version prefixes, e.g. 3.8"],
+                    "tools": ["relevant tools, e.g. pytest, pip"],
+                },
                 "regex": ["regex matching this error"],
                 "keywords": ["keywords for coarse retrieval"],
                 "situation_triggers": (

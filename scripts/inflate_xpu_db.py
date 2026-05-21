@@ -54,7 +54,7 @@ from src.xpu.xpu_vector_store import XpuVectorStore, text_to_embedding  # noqa: 
 # ---------------------------------------------------------------------------
 
 def gen_context_perturbations(entry: dict, n: int = 2) -> list[dict]:
-    """Strategy 1: clone an entry and perturb its context (python / os / tools)."""
+    """Strategy 1: clone an entry and perturb its applicability (python / os / tools)."""
     variants = []
     py_versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
     os_options = [["linux"], ["linux", "macos"], ["linux", "windows"]]
@@ -62,7 +62,8 @@ def gen_context_perturbations(entry: dict, n: int = 2) -> list[dict]:
 
     for _ in range(n):
         v = copy.deepcopy(entry)
-        ctx = v["context"]
+        signals = v.setdefault("signals", {})
+        ctx = signals.setdefault("applicability", {})
         if isinstance(ctx, dict):
             ctx["python"] = [random.choice(py_versions)]
             ctx["os"] = random.choice(os_options)
@@ -76,14 +77,16 @@ def gen_context_perturbations(entry: dict, n: int = 2) -> list[dict]:
 
 
 def gen_cross_graft(entries: list[dict], n: int = 100) -> list[dict]:
-    """Strategy 2: chimera entries — signals from A, advice from B, atoms from {A,B,C}."""
+    """Strategy 2: chimera entries — signals from B (with A's applicability), advice from B, atoms from {A,B,C}."""
     variants = []
     for _ in range(n):
         a, b, c = random.sample(entries, 3)
+        signals_b = copy.deepcopy(b["signals"]) or {}
+        a_app = (a.get("signals") or {}).get("applicability", {})
+        signals_b["applicability"] = copy.deepcopy(a_app)
         v = {
             "id": f"noise_graft_{int(time.time())}_{os.urandom(3).hex()}",
-            "context": copy.deepcopy(a["context"]),
-            "signals": copy.deepcopy(b["signals"]),
+            "signals": signals_b,
             "advice_nl": copy.deepcopy(c["advice_nl"]),
             "atoms": copy.deepcopy(random.choice([a, b, c])["atoms"]),
             "telemetry": {"hits": 0},
@@ -148,8 +151,8 @@ def gen_cross_lang_entries(n: int = 100) -> list[dict]:
     """Strategy 4: irrelevant non-Python ecosystem entries."""
     cross_lang = [
         {
-            "context": {"lang": "javascript", "os": ["linux"], "tools": ["npm", "node"]},
             "signals": {
+                "applicability": {"lang": "javascript", "os": ["linux"], "tools": ["npm", "node"]},
                 "keywords": ["npm install", "node_modules", "package.json"],
                 "regex": [],
                 "situation_triggers": ["npm install fails"],
@@ -160,8 +163,8 @@ def gen_cross_lang_entries(n: int = 100) -> list[dict]:
             "atoms": [{"name": "shell", "args": {"command": "npm install --legacy-peer-deps"}}],
         },
         {
-            "context": {"lang": "javascript", "os": ["linux"], "tools": ["yarn"]},
             "signals": {
+                "applicability": {"lang": "javascript", "os": ["linux"], "tools": ["yarn"]},
                 "keywords": ["yarn install", "yarn.lock"],
                 "regex": [],
                 "situation_triggers": ["yarn install fails"],
@@ -172,8 +175,8 @@ def gen_cross_lang_entries(n: int = 100) -> list[dict]:
             "atoms": [{"name": "shell", "args": {"command": "yarn install --ignore-engines"}}],
         },
         {
-            "context": {"lang": "rust", "os": ["linux"], "tools": ["cargo"]},
             "signals": {
+                "applicability": {"lang": "rust", "os": ["linux"], "tools": ["cargo"]},
                 "keywords": ["cargo build", "rustc", "Cargo.toml"],
                 "regex": [],
                 "situation_triggers": ["Rust compilation fails"],
@@ -184,8 +187,8 @@ def gen_cross_lang_entries(n: int = 100) -> list[dict]:
             "atoms": [{"name": "shell", "args": {"command": "rustup update stable"}}],
         },
         {
-            "context": {"lang": "go", "os": ["linux"], "tools": ["go"]},
             "signals": {
+                "applicability": {"lang": "go", "os": ["linux"], "tools": ["go"]},
                 "keywords": ["go build", "go mod", "go.sum"],
                 "regex": [],
                 "situation_triggers": ["go mod download fails"],
@@ -196,8 +199,8 @@ def gen_cross_lang_entries(n: int = 100) -> list[dict]:
             "atoms": [{"name": "set_env", "args": {"key": "GOPROXY", "value": "https://goproxy.io,direct"}}],
         },
         {
-            "context": {"lang": "ruby", "os": ["linux"], "tools": ["bundler", "gem"]},
             "signals": {
+                "applicability": {"lang": "ruby", "os": ["linux"], "tools": ["bundler", "gem"]},
                 "keywords": ["bundle install", "Gemfile", "gem install"],
                 "regex": [],
                 "situation_triggers": ["bundle install fails"],
@@ -230,7 +233,7 @@ def load_originals(store: XpuVectorStore) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT id, context, signals, advice_nl, atoms, telemetry "
+                f"SELECT id, signals, advice_nl, atoms, telemetry "
                 f"FROM {table} WHERE id NOT LIKE 'noise_%'"
             )
             rows = cur.fetchall()
@@ -241,11 +244,10 @@ def load_originals(store: XpuVectorStore) -> list[dict]:
     for r in rows:
         entries.append({
             "id": r[0],
-            "context": r[1],
-            "signals": r[2],
-            "advice_nl": r[3],
-            "atoms": r[4],
-            "telemetry": r[5],
+            "signals": r[1],
+            "advice_nl": r[2],
+            "atoms": r[3],
+            "telemetry": r[4],
         })
     return entries
 
@@ -292,13 +294,12 @@ def compute_and_insert(store: XpuVectorStore, variants: list[dict], batch_label:
                     cur.execute(
                         f"""
                         INSERT INTO {table}
-                            (id, context, signals, advice_nl, atoms, embedding, telemetry)
-                        VALUES (%s, %s, %s, %s, %s, %s::vector, %s)
+                            (id, signals, advice_nl, atoms, embedding, telemetry)
+                        VALUES (%s, %s, %s, %s, %s::vector, %s)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         (
                             v["id"],
-                            json.dumps(v["context"], ensure_ascii=False),
                             json.dumps(v["signals"], ensure_ascii=False),
                             json.dumps(v["advice_nl"], ensure_ascii=False),
                             json.dumps(v["atoms"], ensure_ascii=False),

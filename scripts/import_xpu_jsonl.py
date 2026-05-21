@@ -9,12 +9,14 @@ Each JSONL line is one experience entry with this schema:
 
     {
       "id":         "unique-string",
-      "context":    {...},
-      "signals":    {...},
+      "signals":    {... "applicability": {...} ...},
       "advice_nl":  [...],
       "atoms":      [{"name": "...", "args": {...}}, ...],
       "telemetry":  {...}    // optional
     }
+
+Legacy lines that still carry a top-level "context" are folded into
+signals.applicability on load (backward compatibility).
 
 The target table name comes from `XPU_TABLE` (env), default `xpu_entries`.
 The pgvector connection string comes from `dns` (env). The embedding model
@@ -81,10 +83,13 @@ def import_jsonl(jsonl_path: str, clear: bool = False) -> None:
             for a in raw.get("atoms", [])
         ]
 
+        signals = dict(raw.get("signals", {}) or {})
+        if "context" in raw and raw["context"] and "applicability" not in signals:
+            signals["applicability"] = raw["context"]
+
         entry = XpuEntry(
             id=raw["id"],
-            context=raw.get("context", {}),
-            signals=raw.get("signals", {}),
+            signals=signals,
             advice_nl=raw.get("advice_nl", []),
             atoms=atoms,
             telemetry=raw.get("telemetry", {}),
@@ -100,10 +105,9 @@ def import_jsonl(jsonl_path: str, clear: bool = False) -> None:
                     embedding_str = "[" + ",".join(str(float(x)) for x in embedding) + "]"
                     cur.execute(
                         f"""
-                        INSERT INTO {table} (id, context, signals, advice_nl, atoms, embedding, telemetry)
-                        VALUES (%s, %s, %s, %s, %s, %s::vector, %s)
+                        INSERT INTO {table} (id, signals, advice_nl, atoms, embedding, telemetry)
+                        VALUES (%s, %s, %s, %s, %s::vector, %s)
                         ON CONFLICT (id) DO UPDATE SET
-                            context = EXCLUDED.context,
                             signals = EXCLUDED.signals,
                             advice_nl = EXCLUDED.advice_nl,
                             atoms = EXCLUDED.atoms,
@@ -112,7 +116,6 @@ def import_jsonl(jsonl_path: str, clear: bool = False) -> None:
                         """,
                         (
                             entry.id,
-                            json.dumps(entry.context),
                             json.dumps(entry.signals),
                             json.dumps(entry.advice_nl),
                             json.dumps([{"name": a.name, "args": a.args} for a in entry.atoms]),

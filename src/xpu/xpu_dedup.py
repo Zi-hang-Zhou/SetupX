@@ -75,13 +75,11 @@ def _build_judgment_prompt(
         "task": "decide whether the two experiences address the same problem",
         "existing_experience": {
             "id": existing_entry.get("id"),
-            "context": existing_entry.get("context"),
             "signals": existing_entry.get("signals"),
             "advice_nl": existing_entry.get("advice_nl"),
         },
         "new_experience": {
             "id": new_entry_dict.get("id"),
-            "context": new_entry_dict.get("context"),
             "signals": new_entry_dict.get("signals"),
             "advice_nl": new_entry_dict.get("advice_nl"),
         },
@@ -208,11 +206,8 @@ def dedup_and_store(
     """
     from .xpu_adapter import XpuContext
 
-    ctx_lang = (
-        entry.context.get("lang", "python")
-        if isinstance(entry.context, dict)
-        else "python"
-    )
+    applicability = entry.signals.get("applicability", {}) or {}
+    ctx_lang = applicability.get("lang", "python")
     similar_entries = store.search(
         query_embedding=embedding,
         ctx=XpuContext(lang=ctx_lang),
@@ -242,7 +237,6 @@ def dedup_and_store(
 
     new_entry_dict = {
         "id": entry.id,
-        "context": entry.context,
         "signals": entry.signals,
         "advice_nl": entry.advice_nl,
     }

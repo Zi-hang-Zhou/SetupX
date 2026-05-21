@@ -183,10 +183,12 @@ def _store_xpu_experience(
                     XpuAtom(name=a.get("name", ""), args=a.get("args", {}))
                     for a in xpu_obj.get("atoms", [])
                 ]
+                signals = dict(xpu_obj.get("signals", {}) or {})
+                if "context" in xpu_obj and xpu_obj["context"] and "applicability" not in signals:
+                    signals["applicability"] = xpu_obj["context"]
                 xpu_entry = XpuEntry(
                     id=auto_id,
-                    context=xpu_obj.get("context", {}),
-                    signals=xpu_obj.get("signals", {}),
+                    signals=signals,
                     advice_nl=xpu_obj.get("advice_nl", []),
                     atoms=atoms,
                 )

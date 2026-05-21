@@ -20,9 +20,13 @@ class XpuAtom:
 
 @dataclass
 class XpuEntry:
-    """Single XPU experience: signals + advice + atoms + telemetry."""
+    """Single XPU experience: signals + advice + atoms + telemetry.
+
+    `signals.applicability` records applicability conditions (lang / os /
+    python / tools) used for coarse filtering; the other signals subkeys
+    (regex / keywords / situation_triggers) carry error fingerprints.
+    """
     id: str
-    context: Dict[str, Any]
     signals: Dict[str, Any]
     advice_nl: List[str]
     atoms: List[XpuAtom] = field(default_factory=list)
@@ -47,10 +51,14 @@ class XpuContext:
 def _parse_xpu_line(obj: Dict[str, Any]) -> XpuEntry:
     atoms_raw = obj.get("atoms") or []
     atoms = [XpuAtom(name=a.get("name", ""), args=a.get("args", {})) for a in atoms_raw]
+    signals = dict(obj.get("signals") or {})
+    # Backward compatibility: legacy JSONL kept applicability in a top-level
+    # `context` field. Fold it into signals.applicability on load.
+    if "context" in obj and obj["context"] and "applicability" not in signals:
+        signals["applicability"] = obj["context"]
     return XpuEntry(
         id=obj.get("id", ""),
-        context=obj.get("context", {}),
-        signals=obj.get("signals", {}),
+        signals=signals,
         advice_nl=list(obj.get("advice_nl") or []),
         atoms=atoms,
         telemetry=obj.get("telemetry", {"hits": 0, "successes": 0, "failures": 0})
@@ -97,7 +105,7 @@ def _keyword_score(log_snippet: str, keywords: Iterable[str]) -> int:
 def _context_match_score(entry: XpuEntry, ctx: XpuContext) -> int:
     """lang exact (+2), tools intersect (+2), py prefix (+1), os match (+1)."""
     score = 0
-    ectx = entry.context
+    ectx = entry.signals.get("applicability", {}) or {}
 
     if ctx.lang and ectx.get("lang") == ctx.lang:
         score += 2

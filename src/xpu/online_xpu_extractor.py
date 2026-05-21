@@ -102,10 +102,12 @@ def online_extract_and_store(repo_name: str, output_dir: str, sha: str = "HEAD")
 
             atoms = [XpuAtom(name=a.get("name", ""), args=a.get("args", {}))
                      for a in xpu_obj.get("atoms", [])]
+            signals = dict(xpu_obj.get("signals", {}) or {})
+            if "context" in xpu_obj and xpu_obj["context"] and "applicability" not in signals:
+                signals["applicability"] = xpu_obj["context"]
             entry = XpuEntry(
                 id=xpu_obj.get("id"),
-                context=xpu_obj.get("context", {}),
-                signals=xpu_obj.get("signals", {}),
+                signals=signals,
                 advice_nl=xpu_obj.get("advice_nl", []),
                 atoms=atoms
             )

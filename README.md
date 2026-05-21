@@ -6,8 +6,10 @@ commands inside a sandboxed container until installation / tests succeed, and
 emits a result JSON.
 
 This is the **minimum standalone build**. It does not ship benchmark URL
-lists, experience-store dumps, run logs, or experiment scaffolding — only the
-code needed to configure one repository at a time.
+lists, run logs, or experiment scaffolding — only the code needed to
+configure one repository at a time, plus the 600-entry warm XPU store used
+in the paper (`data/xpu_warm.jsonl`, see §6.3) so reviewers can reproduce
+the with-XPU runs.
 
 ---
 
@@ -180,13 +182,20 @@ Each line is one entry with this shape:
 ```jsonc
 {
   "id":         "unique-string",
-  "context":    { /* match conditions: language, build system, etc. */ },
-  "signals":    { /* error fingerprints */ },
+  "signals":    {
+    "applicability": { /* match conditions: language, OS, python, tools */ },
+    "regex":         ["..."],
+    "keywords":     ["..."],
+    "situation_triggers": ["..."]
+  },
   "advice_nl":  ["natural-language hints"],
   "atoms":      [{"name": "shell", "args": {"cmd": "..."}}],
   "telemetry":  {"hits": 0, "successes": 0, "failures": 0}
 }
 ```
+
+Legacy lines that still carry a top-level `"context"` field are still accepted —
+the loader folds them into `signals.applicability` on import.
 
 Bulk-import:
 
@@ -195,10 +204,25 @@ python scripts/import_xpu_jsonl.py path/to/entries.jsonl
 python scripts/import_xpu_jsonl.py path/to/entries.jsonl --clear   # truncate first
 ```
 
-The script embeds each entry's text and upserts into `XPU_TABLE` (default
-`xpu_entries`). Already-present `id`s are updated rather than duplicated.
+### 6.3 Reproduce the paper's warm XPU store
 
-### 6.3 Maintenance helpers
+`data/xpu_warm.jsonl` ships the 600-entry warm XPU store used in the paper's
+with-xpu experiments. Each line follows the 5-field schema above; telemetry
+counters (`hits` / `successes` / `failures`) are the real values accumulated
+during the experiments, not zeroed out.
+
+To reproduce the warm store from scratch:
+
+```bash
+python scripts/import_xpu_jsonl.py data/xpu_warm.jsonl --clear
+```
+
+This embeds each entry's text via `EMBEDDING_MODEL` and upserts into
+`XPU_TABLE`. `--clear` ensures the resulting table contains exactly the 600
+warm entries with no leftovers from prior runs. Already-present `id`s are
+updated in place rather than duplicated.
+
+### 6.4 Maintenance helpers
 
 ```bash
 python scripts/export_xpu.py -o backup.jsonl --full   # dump table to JSONL
