@@ -15,9 +15,6 @@ Each JSONL line is one experience entry with this schema:
       "telemetry":  {...}    // optional
     }
 
-Legacy lines that still carry a top-level "context" are folded into
-signals.applicability on load (backward compatibility).
-
 The target table name comes from `XPU_TABLE` (env), default `xpu_entries`.
 The pgvector connection string comes from `dns` (env). The embedding model
 comes from `EMBEDDING_*` (env). All of these live in `.env` already.
@@ -83,13 +80,9 @@ def import_jsonl(jsonl_path: str, clear: bool = False) -> None:
             for a in raw.get("atoms", [])
         ]
 
-        signals = dict(raw.get("signals", {}) or {})
-        if "context" in raw and raw["context"] and "applicability" not in signals:
-            signals["applicability"] = raw["context"]
-
         entry = XpuEntry(
             id=raw["id"],
-            signals=signals,
+            signals=raw.get("signals", {}) or {},
             advice_nl=raw.get("advice_nl", []),
             atoms=atoms,
             telemetry=raw.get("telemetry", {}),

@@ -51,14 +51,9 @@ class XpuContext:
 def _parse_xpu_line(obj: Dict[str, Any]) -> XpuEntry:
     atoms_raw = obj.get("atoms") or []
     atoms = [XpuAtom(name=a.get("name", ""), args=a.get("args", {})) for a in atoms_raw]
-    signals = dict(obj.get("signals") or {})
-    # Backward compatibility: legacy JSONL kept applicability in a top-level
-    # `context` field. Fold it into signals.applicability on load.
-    if "context" in obj and obj["context"] and "applicability" not in signals:
-        signals["applicability"] = obj["context"]
     return XpuEntry(
         id=obj.get("id", ""),
-        signals=signals,
+        signals=dict(obj.get("signals") or {}),
         advice_nl=list(obj.get("advice_nl") or []),
         atoms=atoms,
         telemetry=obj.get("telemetry", {"hits": 0, "successes": 0, "failures": 0})
