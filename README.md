@@ -5,22 +5,18 @@ repository: given a repo URL, the agent inspects the project, runs shell
 commands inside a sandboxed container until installation / tests succeed, and
 emits a result JSON.
 
-This is the **minimum standalone build**. It does not ship benchmark URL
-lists, run logs, or experiment scaffolding — only the code needed to
+This is the **minimum standalone build**. It contains the code needed to
 configure one repository at a time, plus the 600-entry warm XPU store used
-in the paper (`data/xpu_warm.jsonl`, see §6.3) so reviewers can reproduce
-the with-XPU runs.
+in the paper (`data/xpu_warm.jsonl`, see §6.3) .
 
 ---
 
 ## 1. Requirements
 
 - Python 3.10+
-- A working Docker daemon on the host (`docker ps` must succeed without
-  `sudo`)
+- A working Docker daemon on the host 
 - Network access to one OpenAI-compatible LLM endpoint
 
-That is the entire dependency surface.
 
 ---
 
@@ -144,8 +140,7 @@ log/
 ## 6. Optional — populate the experience store
 
 The agent can consult an offline experience knowledge base (XPU) during
-Phase 1: a pgvector-backed library of "if you see this signal, try these
-commands" snippets distilled from past runs. **It is off by default** and
+Phase 1. **It is off by default** and
 the agent works fine without it — if you do not need it, skip this section.
 
 ### 6.1 Bring up Postgres + pgvector
@@ -193,9 +188,6 @@ Each line is one entry with this shape:
   "telemetry":  {"hits": 0, "successes": 0, "failures": 0}
 }
 ```
-
-Legacy lines that still carry a top-level `"context"` field are still accepted —
-the loader folds them into `signals.applicability` on import.
 
 Bulk-import:
 
