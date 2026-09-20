@@ -43,7 +43,7 @@ SetupX orchestrates repository configuration through three sequential phases:
 
 | Component | Description |
 |-----------|-------------|
-| **SetupX** | Main orchestrator. Runs a ReAct loop with 6 action types: `SHELL_COMMAND`, `TRY_XPU_SUGGESTION`, `SET_ENV`, `ROLLBACK_ENV`, `VERIFY`, `FINISH`. |
+| **SetupAgent** | Main orchestrator. Runs a ReAct loop with 6 action types: `SHELL_COMMAND`, `TRY_XPU_SUGGESTION`, `SET_ENV`, `ROLLBACK_ENV`, `VERIFY`, `FINISH`. |
 | **RetrieverAgent** | Sub-agent for XPU knowledge retrieval. Layer 1: vector coarse filtering (pgvector cosine similarity, top-N). Layer 2: LLM re-ranking for precise matching. Also performs delayed audit of previously used XPUs. |
 | **VerifierAgent** | Read-only sub-agent that runs the project's test suite (`pytest`) and distinguishes setup-induced failures from inherent project issues. |
 | **ProsecutorAgent** | Adversarial investigator. Has container access for evidence gathering, files charges with concrete evidence. |
